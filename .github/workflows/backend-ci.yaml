@@ -1,0 +1,62 @@
+name: Backend Continuous Integration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'starter/backend/**'
+      - '.github/workflows/backend-ci.yaml'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Backend lint check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: starter/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install native build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y python3-dev build-essential
+      - name: Install Pipenv tooling
+        run: python -m pip install pipenv
+      - name: Resolve Python packages
+        run: pipenv install --dev
+      - name: Run static analysis
+        run: pipenv run lint
+
+  test:
+    name: Backend test suite
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: starter/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install native build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y python3-dev build-essential
+      - name: Install Pipenv tooling
+        run: python -m pip install pipenv
+      - name: Resolve Python packages
+        run: pipenv install --dev
+      - name: Execute pytest suite
+        run: pipenv run test
+
+  build:
+    name: Verify backend container build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    defaults:
+      run:
+        working-directory: starter/backend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build --tag movie-backend:${{ github.sha }} .

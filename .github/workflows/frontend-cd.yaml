@@ -1,0 +1,100 @@
+name: Frontend Continuous Deployment
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'starter/frontend/**'
+      - '.github/workflows/frontend-cd.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: ${{ secrets.FRONTEND_ECR_REPOSITORY }}
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  lint:
+    name: Check frontend style
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: starter/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: starter/frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: starter/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+
+  test:
+    name: Check frontend behavior
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: starter/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: starter/frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: starter/frontend/package-lock.json
+      - run: npm ci
+      - run: CI=true npm test
+
+  publish:
+    name: Build and publish frontend
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    defaults:
+      run:
+        working-directory: starter/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure temporary AWS session
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Authenticate Docker with ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Create commit-tagged image
+        env:
+          API_URL: ${{ secrets.REACT_APP_MOVIE_API_URL }}
+        run: docker build --build-arg REACT_APP_MOVIE_API_URL="$API_URL" -t "$ECR_REPOSITORY:$IMAGE_TAG" .
+      - name: Upload image
+        run: docker push "$ECR_REPOSITORY:$IMAGE_TAG"
+
+  deploy:
+    name: Release frontend to EKS
+    runs-on: ubuntu-latest
+    needs: publish
+    defaults:
+      run:
+        working-directory: starter/frontend/k8s
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure temporary AWS session
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: azure/setup-kubectl@v4
+      - name: Connect kubectl to cluster
+        run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+      - name: Point manifest at this release
+        run: kustomize edit set image frontend="$ECR_REPOSITORY:$IMAGE_TAG"
+      - name: Apply manifests
+        run: kustomize build . | kubectl apply -f -
+      - name: Confirm rollout
+        run: kubectl rollout status deployment/frontend --timeout=5m

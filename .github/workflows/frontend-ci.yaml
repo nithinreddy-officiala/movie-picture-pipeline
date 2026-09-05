@@ -1,0 +1,65 @@
+name: Frontend Continuous Integration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'starter/frontend/**'
+      - '.github/workflows/frontend-ci.yaml'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Frontend lint check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: starter/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Node runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: starter/frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: starter/frontend/package-lock.json
+      - name: Restore project dependencies
+        run: npm ci
+      - name: Validate JavaScript style
+        run: npm run lint
+
+  test:
+    name: Frontend test suite
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: starter/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Node runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: starter/frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: starter/frontend/package-lock.json
+      - name: Restore project dependencies
+        run: npm ci
+      - name: Execute Jest checks
+        run: CI=true npm test
+
+  build:
+    name: Verify frontend container build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    defaults:
+      run:
+        working-directory: starter/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build container from source
+        env:
+          REACT_API_ENDPOINT: http://localhost:5000
+        run: >-
+          docker build
+          --build-arg REACT_APP_MOVIE_API_URL="$REACT_API_ENDPOINT"
+          --tag movie-frontend:${{ github.sha }} .
